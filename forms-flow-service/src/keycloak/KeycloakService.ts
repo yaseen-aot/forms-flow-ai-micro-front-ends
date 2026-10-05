@@ -135,8 +135,14 @@ class KeycloakService {
    * Initialize the keycloak
    * make sure `silent-check-sso.html` is present in public folder
    * @param callback - Optional - callback function to excecute after succeessful authentication
+   * @param onError - Optional - called when sign-in cannot complete (for example
+   * the sign-in server cannot be reached), so the caller can show a message
+   * instead of waiting forever. Callers that omit it behave exactly as before.
    */
-  public initKeycloak(callback: (authenticated) => void = () => {}): void {
+  public initKeycloak(
+    callback: (authenticated) => void = () => {},
+    onError?: (error: unknown) => void
+  ): void {
     this.kc
       ?.init(this.keycloakInitConfig)
       .then((authenticated) => {
@@ -161,14 +167,22 @@ class KeycloakService {
             this.token = this.kc.token;
             this._tokenParsed = this.kc.tokenParsed;
             StorageService.save(StorageService.User.AUTH_TOKEN, this.token!);
-            this.kc.loadUserInfo().then((data) => {
-              this.userData = data;
-              StorageService.save(
-                StorageService.User.USER_DETAILS,
-                JSON.stringify(data)
-              );
-              callback(true);
-            });
+            // Two-argument then: only a loadUserInfo failure reaches onError,
+            // not an exception thrown inside the caller's own callback.
+            this.kc.loadUserInfo().then(
+              (data) => {
+                this.userData = data;
+                StorageService.save(
+                  StorageService.User.USER_DETAILS,
+                  JSON.stringify(data)
+                );
+                callback(true);
+              },
+              (err) => {
+                console.error("Failed to load Keycloak user info", err);
+                onError?.(err);
+              }
+            );
             this.refreshToken();
           } else {
             this.logout();
@@ -178,9 +192,10 @@ class KeycloakService {
           this.login();
         }
       })
-      .catch((err) =>
-        console.error("Failed to initialize KeycloakService", err)
-      );
+      .catch((err) => {
+        console.error("Failed to initialize KeycloakService", err);
+        onError?.(err);
+      });
   }
   /**
    * logs the user out and clear all user data from session.
